@@ -1,6 +1,6 @@
-## \# VEL.BMGM <img src="man/figures/logo.png" align="right" width="100"/>
+## VEL.BMGM <img src="man/figures/logo.png" align="right" width="100"/>
 
-**VEL.BMGM**: Bayesian Varying-Effects Logistic Regression with Mixed Graphical Structure
+**Varying-Effects Logistic Regression & Bayesian Mixed Graphical Structure**
 
 This R package implements Bayesian varying-effects logistic regression for binary outcomes, with mixed-type predictors (continuous, discrete, zero-inflated, and categorical). Predictor effects can vary nonlinearly with external covariates, modeled via Gaussian Process priors. The package also estimates a sparse conditional independence graph among predictors, enabling structure discovery and variable selection.
 
