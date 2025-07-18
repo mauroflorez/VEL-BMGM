@@ -1,4 +1,4 @@
-## \# VEL.BMGM <img src="man/figures/logo.png" align="right" width="60"/>
+## \# VEL.BMGM <img src="man/figures/logo.png" align="right" width="100"/>
 
 **VEL.BMGM**: Bayesian Varying-Effects Logistic Regression with Mixed Graphical Structure
 
