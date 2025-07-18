@@ -207,7 +207,7 @@ bmgm_gp <- function(X, Y, Z, type_y = 'b_new', type, nburn = 1000, nsample = 100
 
   lastgammak_all = matrix(0, nrow = q, ncol = K)
   lastw_all = matrix(0, nrow = q, ncol = K)
-  lastr_all = rep(100, q)
+  lastr_all = rep(1, q); tune = 10
 
   for(j in 1:q){
     initial <- compute_Cj_var(Kernels_Z, Xj = X[,j], gamma_tilde = gamma_tilde[j,],

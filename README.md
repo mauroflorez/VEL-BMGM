@@ -17,12 +17,15 @@ This R package implements Bayesian varying-effects logistic regression for binar
 Clone/download this repository, then install with:
 
 ``` r
-devtools::install("path/to/VEL.BMGM")
+devtools::install("mauroflorez/VEL.BMGM")
 ```
 
 ## Basic Usage
 
-library(VEL.BMGM) fit \<- bmgm_gp(X, Y, Z, type_y = 'b_new', type = type_vector, ...)
+``` r
+library(VEL.BMGM) 
+fit <- bmgm_gp(X, Y, Z, type_y = 'b_new', type = type_vector)
+```
 
 ## Authors
 
