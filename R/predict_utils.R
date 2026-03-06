@@ -1,72 +1,118 @@
-#' Predict with Bayesian Mixed Graphical Model
+#' Predict with VEL-BMGM Model
 #'
-#' Generates predictions for new data from a fitted VEL.BMGM model.
+#' Generates predictions for new test data from a fitted VEL-BMGM model.
+#' Uses GP conditional prediction to extrapolate varying coefficients
+#' from training covariate values to test covariate values.
 #'
-#' @param fit Model fit object from bmgm_gp().
-#' @param X_new New predictor matrix (for test data).
-#' @param Z Covariate matrix (includes both train and test).
-#' @param beta_j_est Posterior mean or estimate of beta_j.
-#' @param PPI_Z Posterior probabilities for kernel components.
+#' @param fit Model fit object from bmgm_GP().
+#' @param X_test Test predictor matrix (n_test x p).
+#' @param Z_test Test covariate matrix (n_test x K).
+#' @param Z_train Training covariate matrix (n_train x K). If NULL, uses fit$Z.
 #' @param mcmc_samples Number of posterior samples to use (default 1000).
-#' @param test Indices of testing data
-#' @param train Indices of training data
-#' @return Vector of predicted probabilities (for binary Y).
+#' @param threshold PPI threshold for covariate selection (default 0.5).
+#'
+#' @return A list with:
+#'   \item{prob_mean}{Vector of mean predicted probabilities (length n_test).}
+#'   \item{prob_samples}{Matrix (mcmc_samples x n_test) of predicted probabilities per MCMC iteration.}
+#'   \item{class}{Predicted binary class (threshold at 0.5).}
 #' @export
-predict_jbmgm <- function(fit, X_new, test, train, Z, beta_j_est, PPI_Z, mcmc_samples = 1000){
-  n <- nrow(Z)
-  K <- ncol(Z)
-  p <- ncol(X_new)
-  n_test <- nrow(X_new)
-  n_train <- n - n_test
-  nburn <- fit$nburn
+predict_jbmgm <- function(fit, X_test, Z_test, Z_train = NULL,
+                          mcmc_samples = 1000, threshold = 0.5) {
+
+  nburn   <- fit$nburn
   nsample <- fit$nsample
-  X_centered <- scale(X_new, center = TRUE, scale = FALSE)
+  p       <- ncol(X_test)
+  n_test  <- nrow(X_test)
+  K       <- ncol(Z_test)
 
-  Z_norm <- apply(Z, 2, function(x) scales::rescale(x, to = c(0, 1)))
-  Kernels_Z_train <- array(0, dim = c(n_train, n_train, K))
-  Kernels_Z_test_train <- array(0, dim = c(n_test, n_train, K))
+  if (is.null(Z_train)) Z_train <- fit$Z
+  n_train <- nrow(Z_train)
 
-  for(k in 1:K){
-    dists_test_train <- as.matrix(proxy::dist(Z_norm[test, k, drop = FALSE],
-                                              Z_norm[train, k, drop = FALSE],
-                                              method = "euclidean"))^2
-    Kernels_Z_train[,,k] <- kernel_se(Z_norm[train, k], lengthscale = 0.5, sigma_f = 1)
-    Kernels_Z_test_train[,,k] <- exp(-0.5 * dists_test_train / 0.5^2)
+  # Normalize covariates to [0,1] using TRAINING range
+  Z_all   <- rbind(Z_train, Z_test)
+  Z_norm  <- apply(Z_all, 2, function(x) scales::rescale(x, to = c(0, 1)))
+  Z_train_norm <- Z_norm[1:n_train, , drop = FALSE]
+  Z_test_norm  <- Z_norm[(n_train + 1):(n_train + n_test), , drop = FALSE]
+
+  # Build kernel matrices
+  Kernels_train      <- array(0, dim = c(n_train, n_train, K))
+  Kernels_test_train <- array(0, dim = c(n_test, n_train, K))
+
+  lengthscale <- 0.5  # matches the fitting function
+  sigma_f     <- 1
+
+  for (k in 1:K) {
+    Kernels_train[,,k] <- kernel_se(Z_train_norm[, k],
+                                    lengthscale = lengthscale,
+                                    sigma_f = sigma_f)
+
+    dists_sq <- outer(Z_test_norm[, k], Z_train_norm[, k],
+                      function(a, b) (a - b)^2)
+    Kernels_test_train[,,k] <- sigma_f^2 * exp(-dists_sq / lengthscale^2)
   }
 
-  calc_Cj <- function(w, r){
-    CZZstar <- Reduce('+', lapply(1:K, function(x) w[x]^2 * Kernels_Z_test_train[,,x]))
-    CZZ <- Reduce('+', lapply(1:K, function(x) w[x]^2 * Kernels_Z_train[,,x])) + 1/r*diag(n_train)
+  # GP conditional prediction: beta_j_star = C(Z*, Z) C(Z, Z)^{-1} beta_j_hat
+  calc_Cj_pred <- function(w, r) {
+    CZZstar <- Reduce('+', lapply(1:K, function(k)
+      w[k]^2 * Kernels_test_train[,,k]))
+    CZZ <- Reduce('+', lapply(1:K, function(k)
+      w[k]^2 * Kernels_train[,,k])) + (1/r) * diag(n_train)
     CZZ_inv <- solve(CZZ)
     return(CZZstar %*% CZZ_inv)
   }
 
-  sample_est <- sample(1:nsample, mcmc_samples)
-  beta_j_star <- array(0, dim = c(n_test, p, length(sample_est)))
-  eta_i <- matrix(0, nrow = length(sample_est), ncol = n_test)
+  # Compute posterior mean beta_j (training) and covariate PPIs
+  post_idx <- (nburn + 1):(nburn + nsample)
+  gamma_post <- fit$post_gamma[post_idx, 1:p, drop = FALSE]
 
-  for(m in 1:length(sample_est)){
-    for(j in 1:p){
-      if(fit$post_gamma[sample_est[m] + nburn,j] == 1){
-        ind <- (PPI_Z[j,] > 0.5)*1
-        w_t <- fit$post_w[j,,sample_est[m]+nburn]
-        r <- fit$post_r[sample_est[m]+nburn,j]
-        beta_j_star[,j,m] <- calc_Cj(w_t*ind, r)%*%beta_j_est[,j]
-      } else{
-        beta_j_star[,j,m] <- rep(0, n_test)
+  beta_j_est <- matrix(0, nrow = n_train, ncol = p)
+  PPI_Z      <- matrix(0, nrow = p, ncol = K)
+
+  for (j in 1:p) {
+    included_iters <- which(gamma_post[, j] == 1)
+    if (length(included_iters) > 0) {
+      beta_samples <- fit$beta_j[1:n_train, j, post_idx[included_iters]]
+      if (is.matrix(beta_samples)) {
+        beta_j_est[, j] <- rowMeans(beta_samples)
+      } else {
+        beta_j_est[, j] <- beta_samples
       }
+    }
+
+    for (k in 1:K) {
+      PPI_Z[j, k] <- mean(fit$post_gamma_tilde[j, k, post_idx])
     }
   }
 
-  eta_i <- matrix(0, nrow = length(sample_est), ncol = n_test)
-  for (m in 1:length(sample_est)) {
-    beta_0_m <- fit$post_beta0[sample_est[m] + nburn]
-    eta_i[m, ] <- beta_0_m + rowSums(X_centered * beta_j_star[,, m])
+  # Sample posterior iterations
+  n_avail    <- min(mcmc_samples, nsample)
+  sample_idx <- sample(1:nsample, n_avail)
+
+  beta_j_star <- array(0, dim = c(n_test, p, n_avail))
+  eta_i       <- matrix(0, nrow = n_avail, ncol = n_test)
+
+  for (m in seq_along(sample_idx)) {
+    s <- sample_idx[m] + nburn
+    for (j in 1:p) {
+      if (fit$post_gamma[s, j] == 1) {
+        ind <- as.numeric(PPI_Z[j, ] > threshold)
+        w_t <- fit$post_w[j, , s] * ind
+        r_t <- fit$post_r[s, j]
+        beta_j_star[, j, m] <- calc_Cj_pred(w_t, r_t) %*% beta_j_est[, j]
+      }
+    }
+
+    beta_0_m <- fit$post_beta0[s]
+    eta_i[m, ] <- beta_0_m + rowSums(X_test * beta_j_star[,, m])
   }
 
-  Y_pred_prob <- LaplacesDemon::invlogit(eta_i)
-  Y_pred_prob_mean <- apply(Y_pred_prob, 2, mean)
-  y_pred_our <- ifelse(Y_pred_prob_mean > 0.5, 1, 0)
+  prob_samples <- plogis(eta_i)  # logistic transform (base R, no dependency)
+  prob_mean    <- colMeans(prob_samples)
+  y_class      <- as.integer(prob_mean > 0.5)
 
-  return(Y_pred_prob_mean)
+  list(
+    prob_mean    = prob_mean,
+    prob_samples = prob_samples,
+    class        = y_class
+  )
 }
