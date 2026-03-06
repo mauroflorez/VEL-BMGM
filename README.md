@@ -17,7 +17,7 @@ This R package implements Bayesian varying-effects logistic regression for binar
 Clone/download this repository, then install with:
 
 ``` r
-devtools::install("mauroflorez/VEL.BMGM")
+devtools::install_github("mauroflorez/VEL.BMGM")
 ```
 
 ## Basic Usage
