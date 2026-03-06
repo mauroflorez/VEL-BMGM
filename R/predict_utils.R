@@ -61,7 +61,7 @@ predict_jbmgm <- function(fit, X_new, test, train, Z, beta_j_est, PPI_Z, mcmc_sa
   eta_i <- matrix(0, nrow = length(sample_est), ncol = n_test)
   for (m in 1:length(sample_est)) {
     beta_0_m <- fit$post_beta0[sample_est[m] + nburn]
-    eta_i[m, ] <- beta_0_m + rowSums(X_centered[test,] * beta_j_star[,, m])
+    eta_i[m, ] <- beta_0_m + rowSums(X_centered * beta_j_star[,, m])
   }
 
   Y_pred_prob <- LaplacesDemon::invlogit(eta_i)
